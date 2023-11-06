@@ -72,6 +72,9 @@ Module.register("MMM-PlexNowPlaying", {
 		self.validNetworkFilters = [ "local", "remote", "both" ];
 		self.validPlayStateFilters = [ "playing", "paused", "both" ];
 		self.validServerProtocols = [ "http", "https" ];
+		// Lyrics Vars
+		self.showingLyrics = false;
+		self.currentTrack = '';
 
 		if (!axis.isString(self.config.serverAddress) || 0 === self.config.serverAddress.length) {
 			self.log("A server URL is required. ", "error");
@@ -195,6 +198,7 @@ Module.register("MMM-PlexNowPlaying", {
 	 */
 	scheduleUpdate: function() {
 		var self = this;
+		clearInterval(self.updateTimer);
 		self.updateTimer = setInterval(function() { self.getData(1); }, self.config.updateInterval);
 		self.log( self.translate("UPDATE_SCHEDULED", { "seconds": (self.config.updateInterval / 1000) }) );
 	},
@@ -219,7 +223,7 @@ Module.register("MMM-PlexNowPlaying", {
 		}
 
 		var xhttp = new XMLHttpRequest();
-
+		
 		xhttp.onreadystatechange = function() {
 			if (this.readyState == 4) {
 				if (this.status == 200) {
@@ -459,6 +463,7 @@ Module.register("MMM-PlexNowPlaying", {
 		return newData;
 	},
 
+
 	/**
 	 * Override the notificationReceived function.
 	 * For now, there are no actions based on system or module notifications.
@@ -471,7 +476,11 @@ Module.register("MMM-PlexNowPlaying", {
 		var self = this;
 
 		if (sender) { // If the notification is coming from another module
-
+			if(sender.name == "MMM-LiveLyrics") {
+				if(notification == "GET_PLAYING") {
+					// TODO: SEND NOTIFICATION NOW PLAYING WITH PAYLOAD (ONLY USED ON RESUME APPARENTLY!!!)
+				}
+			}
 		} else { // If the notification is coming from the MagicMirror system
 			switch (notification) {
 				//case "ALL_MODULES_STARTED": break;
@@ -756,21 +765,70 @@ Module.register("MMM-PlexNowPlaying", {
 				var duration = Number(item.duration);
 				var viewOffset = Number(item.viewOffset);
 
-				if (!isNaN(duration) && !isNaN(viewOffset)) {
-					var progressRow = document.createElement("tr");
-					progressRow.setAttribute("class", "progressBarRow");
-					var procressCell = document.createElement("td");
-					procressCell.setAttribute("class", "progressBarCell");
-					var progressBar = document.createElement("div");
-					progressBar.setAttribute("class", "progressBar");
-					progressBar.style.width = String(Math.round(viewOffset / duration * 10000) / 100) + "%";
-					progressBar.style.transition = "width 1.5s";
-					progressBar.setAttribute("data-state", item.player.state);
-					progressBar.setAttribute("data-duration", duration);
-					progressBar.setAttribute("data-viewOffset", viewOffset + 1000);
-					procressCell.appendChild(progressBar);
-					progressRow.appendChild(procressCell);
-					mainTable.appendChild(progressRow);
+				var prevViewOffset = 0;
+				var progressBars = self.moduleWrapper.getElementsByClassName("progressBar");
+				if (progressBars != null && progressBars.length > 0 && progressBars[i] != null) {
+					existingBar = progressBars[i]
+					prevViewOffset = Number(existingBar.getAttribute("data-prevViewOffset"))
+
+					// Updating progress bar
+					if(Math.abs(prevViewOffset - viewOffset) < Number.EPSILON) { // Equal, change not warranted since plex data didn't change
+						if (!isNaN(duration) && !isNaN(viewOffset)) {
+							var progressRow = document.createElement("tr");
+							progressRow.setAttribute("class", "progressBarRow");
+							var procressCell = document.createElement("td");
+							procressCell.setAttribute("class", "progressBarCell");
+							var progressBar = document.createElement("div");
+							progressBar.setAttribute("class", "progressBar");
+							progressBar.style.width = existingBar.style.width
+							progressBar.style.transition = "width 1.5s";
+							progressBar.setAttribute("data-duration", existingBar.getAttribute("data-duration"));
+							progressBar.setAttribute("data-viewOffset", existingBar.getAttribute("data-viewOffset"));
+							progressBar.setAttribute("data-state", item.player.state);
+							progressBar.setAttribute("data-prevViewOffset", existingBar.getAttribute("data-prevViewOffset"));
+							progressBar.setAttribute("data-prevDuration", existingBar.getAttribute("data-prevDuration"));
+							procressCell.appendChild(progressBar);
+							progressRow.appendChild(procressCell);
+							mainTable.appendChild(progressRow);
+						}
+					} else { // Not equal, significant change, modify bar
+						if (!isNaN(duration) && !isNaN(viewOffset)) {
+							var progressRow = document.createElement("tr");
+							progressRow.setAttribute("class", "progressBarRow");
+							var procressCell = document.createElement("td");
+							procressCell.setAttribute("class", "progressBarCell");
+							var progressBar = document.createElement("div");
+							progressBar.setAttribute("class", "progressBar");
+							//progressBar.style.width = existingBar.style.width
+							progressBar.style.width = String(Math.round(viewOffset / duration * 10000) / 100) + "%";
+							progressBar.style.transition = "width 1.5s";
+							progressBar.setAttribute("data-duration", duration);
+							progressBar.setAttribute("data-viewOffset", viewOffset + 1000);
+							progressBar.setAttribute("data-state", item.player.state);
+							progressBar.setAttribute("data-prevViewOffset", -1);
+							progressBar.setAttribute("data-prevDuration", -1);
+							procressCell.appendChild(progressBar);
+							progressRow.appendChild(procressCell);
+							mainTable.appendChild(progressRow);
+						}
+					}
+				} else {
+					if (!isNaN(duration) && !isNaN(viewOffset)) {
+						var progressRow = document.createElement("tr");
+						progressRow.setAttribute("class", "progressBarRow");
+						var procressCell = document.createElement("td");
+						procressCell.setAttribute("class", "progressBarCell");
+						var progressBar = document.createElement("div");
+						progressBar.setAttribute("class", "progressBar");
+						progressBar.style.width = String(Math.round(viewOffset / duration * 10000) / 100) + "%";
+						progressBar.style.transition = "width 1.5s";
+						progressBar.setAttribute("data-state", item.player.state);
+						progressBar.setAttribute("data-duration", duration);
+						progressBar.setAttribute("data-viewOffset", viewOffset + 1000);
+						procressCell.appendChild(progressBar);
+						progressRow.appendChild(procressCell);
+						mainTable.appendChild(progressRow);
+					}
 				}
 
 				var spacerRow = document.createElement("tr");
@@ -812,14 +870,66 @@ Module.register("MMM-PlexNowPlaying", {
 	progressTick: function() {
 		var self = this;
 		var progressBars = self.moduleWrapper.getElementsByClassName("progressBar");
+		var sentNowPlaying = false;
 		//self.log("progressBars: " + typeof(progressBars) + " size: " + progressBars.length, "dev");
 		for (var i = 0; i < progressBars.length; i++) {
 			var progressBar = progressBars[i];
+			item = this.plexData[i]
 			if ("playing" === progressBar.getAttribute("data-state")) {
+
+				if (progressBar.getAttribute("data-prevViewOffset") == -1) {
+					progressBar.setAttribute("data-prevViewOffset", progressBar.getAttribute("data-viewOffset") - 1000);
+					progressBar.setAttribute("data-prevDuration", progressBar.getAttribute("data-duration"));
+				}
+
 				var duration = Number(progressBar.getAttribute("data-duration"));
 				var viewOffset = Math.min(duration, Number(progressBar.getAttribute("data-viewOffset")) + 1000);
 				progressBar.setAttribute("data-viewOffset", viewOffset);
 				progressBar.style.width = String(Math.round(viewOffset / duration * 10000) / 100) + "%";
+
+				if (this.showingLyrics && item['title'] === this.currentTrack) {
+					sentNowPlaying = true;
+					const lyricProgress = document.getElementById("LYRIC-PROGRESS")
+					if (lyricProgress) {
+						lyricProgress.setAttribute("from", "Plex");
+						lyricProgress.setAttribute("now", viewOffset + 2000);
+						lyricProgress.setAttribute("max", duration + 2000);
+					}
+				}
+				
+				if (!this.showingLyrics || item['title'] !== this.currentTrack) {
+					if (item['type'] === 'track') {
+						// SHOW LYRICS
+						sentNowPlaying = true;
+						this.sendNotification("NOW_PLAYING", {
+							playerIsEmpty: false,
+							name: item['title'],
+							image: 'http://' + this.config.serverAddress + ":" + this.config.serverPort + item['thumbImage'] + "?X-Plex-Token=" + this.config.xPlexToken,
+							uri: 'plex' + item['title'],
+							artist: item['artistTitle'],
+							artists: item['artistTitle'],
+							type: item['type'],
+							device: 'plex',
+							deviceType: item['player']['platform'],
+							duration: duration
+						  });
+						this.showingLyrics = true;
+						this.currentTrack = item['title']
+					}
+				}
+			} else {
+				if (item['type'] === 'track' && !sentNowPlaying) {
+					if (this.showingLyrics) {
+						// HIDE LYRICS
+						this.sendNotification("NOW_PLAYING", { playerIsEmpty: true , device : 'plex'});
+						this.showingLyrics = false;
+
+						const lyricProgress = document.getElementById("LYRIC-PROGRESS")
+						if (lyricProgress) {
+							lyricProgress.setAttribute("from", "Spotify");
+						}
+					}
+				}
 			}
 		}
 	},
